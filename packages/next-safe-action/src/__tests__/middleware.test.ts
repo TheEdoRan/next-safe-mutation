@@ -12,6 +12,8 @@ import {
 	returnValidationErrors,
 } from "..";
 import { zodAdapter } from "../adapters/zod";
+import { redirect } from "next/navigation";
+import { isFrameworkError } from "../next/errors";
 
 const ac = createSafeActionClient({
 	validationAdapter: zodAdapter(),
@@ -291,6 +293,70 @@ test("server validation errors in execution result from middleware are correct",
 	};
 
 	assert.deepStrictEqual(middlewareResult, expectedResult);
+});
+
+test("framework error result from middleware is correct", async () => {
+	let middlewareResult = {};
+
+	const action = ac
+		.schema(async () =>
+			z.object({
+				username: z.string(),
+			})
+		)
+		.bindArgsSchemas([z.object({ age: z.number().positive() })])
+		.use(async ({ next }) => {
+			// Await action execution.
+			const res = await next();
+			middlewareResult = res;
+			return res;
+		})
+		.action(async () => {
+			redirect("/newPath");
+		});
+
+	const inputs = [{ age: 30 }, { username: "johndoe" }] as const;
+	await action(...inputs).catch((e) => {
+		if (!isFrameworkError(e)) {
+			throw e;
+		}
+	});
+
+	const expectedResult = {
+		success: true,
+		ctx: {
+			foo: "bar",
+		},
+		data: undefined,
+		parsedInput: {
+			username: "johndoe",
+		},
+		bindArgsParsedInputs: [
+			{
+				age: 30,
+			},
+		],
+	};
+
+	assert.deepStrictEqual(middlewareResult, expectedResult);
+});
+
+test("framework error is thrown within middleware", async () => {
+	const action = ac
+		.use(async () => {
+			redirect("/newPath");
+		})
+		.action(async () => {
+			return null;
+		});
+
+	await assert.rejects(
+		async () => await action(),
+		(e) => {
+			return isFrameworkError(e);
+		},
+		"A framework error to be thrown"
+	);
 });
 
 // Flattened validation errors shape.
